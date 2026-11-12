@@ -1,11 +1,11 @@
 """API del Control Presupuestario.
 
 Dos modos, la misma web y los mismos reportes:
-  MODO=supabase  la base y el login son de Supabase; la API solo importa el Excel y exporta.
-                 Variables: SUPABASE_URL, SUPABASE_KEY (publishable key).
+  MODO=supabase  la base y el login son de Supabase; la API importa, exporta y da acceso a Groq.
+                 Variables: SUPABASE_URL, SUPABASE_KEY (publishable key), GROQ_API_KEY (opcional).
   MODO=postgres  FastAPI + SQLAlchemy contra un PostgreSQL propio; la API también hace el login
                  y atiende todas las consultas de la web. Variables: DATABASE_URL, JWT_SECRETO,
-                 ADMIN_EMAIL y ADMIN_CLAVE (crean el primer admin al arrancar).
+                 ADMIN_EMAIL, ADMIN_CLAVE (crean el primer admin al arrancar) y GROQ_API_KEY (opcional).
 
 Si existe ../web/dist, la API también sirve la web en la misma dirección.
 
@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +43,8 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")          # publishable key (sb
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 MODO = os.environ.get("MODO", "postgres" if DATABASE_URL and not SUPABASE_URL else "supabase").lower()
 ORGANIZACION = os.environ.get("ORGANIZACION", "")           # encabezado de reportes y de la web
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+MODELO_CHAT = "llama-3.3-70b-versatile"
 ORIGENES = [o.strip() for o in os.environ.get("ORIGENES", "*").split(",") if o.strip()]
 WEB_DIST = Path(os.environ.get("WEB_DIST", Path(__file__).resolve().parent.parent / "web" / "dist"))
 MAX_MB = 15
@@ -165,6 +168,56 @@ async def rpc(funcion: str, params: dict = Body(default_factory=dict), sb=Depend
     return await sb.rpc(funcion, params or {})
 
 
+class SolicitudChat(BaseModel):
+    messages: list[dict[str, Any]] = Field(min_length=1, max_length=40)
+    tools: list[dict[str, Any]] = Field(max_length=8)
+
+
+HERRAMIENTAS_CHAT = {
+    "obtener_resumen_general",
+    "obtener_reporte_agrupado",
+    "obtener_alertas",
+    "buscar_movimientos",
+}
+
+
+@app.post("/ia/chat")
+async def chat_ia(pedido: SolicitudChat, sb=Depends(cliente)):
+    if not GROQ_API_KEY:
+        raise HTTPException(503, "Configura GROQ_API_KEY en las variables privadas del servidor")
+    if not await sb.rpc("mi_perfil", {}):
+        raise HTTPException(401, "Tu usuario no tiene un perfil activo")
+
+    for herramienta in pedido.tools:
+        nombre = herramienta.get("function", {}).get("name")
+        if herramienta.get("type") != "function" or nombre not in HERRAMIENTAS_CHAT:
+            raise HTTPException(400, "La solicitud contiene una herramienta no permitida")
+
+    try:
+        async with httpx.AsyncClient(timeout=45) as http:
+            respuesta = await http.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                json={
+                    "model": MODELO_CHAT,
+                    "messages": pedido.messages,
+                    "tools": pedido.tools,
+                    "tool_choice": "auto",
+                },
+            )
+    except httpx.RequestError as e:
+        raise HTTPException(502, "No se pudo conectar con el servicio de IA") from e
+
+    try:
+        resultado = respuesta.json()
+    except ValueError:
+        resultado = {}
+    if not respuesta.is_success:
+        detalle = resultado.get("error", {}).get("message") or "El servicio de IA rechazó la consulta"
+        raise HTTPException(502, detalle)
+    return resultado
+
+
 # ---------------------------------------------------------------------------
 # Sesión (solo modo postgres)
 # ---------------------------------------------------------------------------
@@ -255,59 +308,6 @@ async def importar(archivo: UploadFile = File(...), gestion: int | None = Form(N
         raise
     return {"importacion_id": imp_id, "gestion": lec.gestion, "archivo": nombre, "resumen": lec.resumen,
             "validaciones": lec.validaciones, "vista_previa": previa}
-
-@app.post("/importaciones/automatico")
-async def importar_automatico(
-    archivo: UploadFile = File(...),
-    gestion: int | None = Form(None),
-    modo: Literal["sincronizar", "agregar"] = Form("sincronizar"),
-    forzar_con_errores: bool = Form(False),
-    sb=Depends(cliente),
-):
-    """Carga, valida y aplica automáticamente en la base de datos (exclusivo Admin)."""
-    if not await sb.rpc("es_admin", {}):
-        raise HTTPException(403, "Solo un administrador puede ejecutar la carga automática")
-    nombre = archivo.filename or "archivo.xlsx"
-    if not nombre.lower().endswith((".xlsx", ".xlsm")):
-        raise HTTPException(415, "Sube el archivo en formato .xlsx")
-    contenido = await archivo.read(MAX_MB * 1024 * 1024 + 1)
-    if len(contenido) > MAX_MB * 1024 * 1024:
-        raise HTTPException(413, f"El archivo pasa de {MAX_MB} MB")
-    try:
-        lec = await run_in_threadpool(leer_excel, contenido, nombre, gestion)
-    except ErrorLectura as e:
-        raise HTTPException(422, str(e)) from e
-
-    errores = [v for v in lec.validaciones if v.get("severidad") == "error"]
-    if errores and not forzar_con_errores:
-        raise HTTPException(422, detail={
-            "mensaje": "El archivo contiene errores de validación. Activa 'forzar con errores' o usa Importar Excel.",
-            "validaciones": errores,
-        })
-
-    imp_id = await sb.rpc("importacion_iniciar", {
-        "p_gestion": lec.gestion, "p_archivo": nombre, "p_sha256": lec.sha256, "p_modo": modo,
-        "p_resumen": lec.resumen, "p_validaciones": lec.validaciones})
-    try:
-        filas = lec.presupuestos + lec.movimientos
-        for i in range(0, len(filas), LOTE):
-            await sb.rpc("importacion_cargar", {"p_id": imp_id, "p_filas": filas[i:i + LOTE]})
-        resultado = await sb.rpc("importacion_confirmar", {"p_id": imp_id})
-    except Exception:
-        try:
-            await sb.rpc("importacion_descartar", {"p_id": imp_id})
-        except Exception:  # noqa: BLE001
-            pass
-        raise
-    return {
-        "importacion_id": imp_id,
-        "gestion": lec.gestion,
-        "archivo": nombre,
-        "automatico": True,
-        "resumen": lec.resumen,
-        "validaciones": lec.validaciones,
-        "resultado": resultado,
-    }
 
 @app.post("/importaciones/automatico")
 async def importar_automatico(
