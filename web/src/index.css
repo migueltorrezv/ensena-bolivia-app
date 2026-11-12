@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+
+/* Tokens. La tinta es el mismo azul de los PDF y Excel que exporta la API:
+   la web y los reportes impresos se ven como un solo sistema. */
+@theme {
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* === Paleta Educa Bolivia === */
+  --color-tinta:        #2D6A4F;  /* sidebar principal         */
+  --color-tinta-oscura: #1B4332;  /* hover / sombra sidebar    */
+  --color-tinta-clara:  #40916C;  /* tono intermedio sidebar   */
+
+  --color-fondo:        #F6FAF7;  /* fondo general de la app   */
+  --color-superficie:   #ffffff;  /* tarjetas, paneles blancos */
+
+  --color-borde:        #D8F3DC;  /* bordes sutiles            */
+  --color-borde-fuerte: #B7E4C7;  /* bordes de inputs / tablas */
+
+  --color-texto:        #1F2937;  /* texto principal           */
+  --color-texto-2:      #5B6770;  /* texto secundario          */
+  --color-texto-3:      #8a9ba5;  /* texto terciario / hints   */
+
+  /* Series (gráficos) */
+  --color-serie-1:       #40916C; /* acento principal (verde)  */
+  --color-serie-1-claro: #74C69D; /* versión pálida del acento */
+  --color-serie-1-pista: #D8F3DC; /* fondo de pista / hover    */
+  --color-serie-2:       #eb6834; /* naranja (contraste)       */
+  --color-serie-3:       #52B788; /* verde hoja (3.ª serie)    */
+
+  /* Estados */
+  --color-bien:       #40916C;    /* positivo / ok             */
+  --color-bien-texto: #1B4332;    /* texto sobre bien          */
+  --color-aviso:      #fab219;    /* advertencia               */
+  --color-serio:      #ec835a;    /* serio / atención          */
+  --color-critico:    #B42318;    /* error / crítico           */
+}
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    @apply bg-fondo text-texto font-sans antialiased;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  :focus-visible { outline: 2px solid var(--color-serie-1); outline-offset: 2px; border-radius: 4px; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+}
+
+@layer utilities {
+  .num { font-variant-numeric: tabular-nums; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
