@@ -54,6 +54,9 @@ export function crear(cfg) {
     confirmar: async (id) => (await llamar(`/importaciones/${id}/confirmar`, { method: 'POST' })).json(),
     descartar: async (id) => (await llamar(`/importaciones/${id}/descartar`, { method: 'POST' })).json(),
     exportar: (pedido) => exportar(llamar, pedido),
+    chatIA: async (cuerpo) => (await llamar('/ia/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo),
+    })).json(),
     async cambiarClave(_uid, clave) {
       const { error } = await sb.auth.updateUser({ password: clave })
       if (error) throw new Error(error.message)

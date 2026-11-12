@@ -81,7 +81,7 @@ export function Chatbot() {
             ))}
             {cargando && (
               <div className="mr-6 rounded-lg border border-borde bg-fondo px-3 py-2 text-xs text-texto-2">
-                Consultando Gemini y los datos del presupuesto...
+                Consultando los datos del presupuesto...
               </div>
             )}
             <div ref={finRef} />

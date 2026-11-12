@@ -52,6 +52,7 @@ export function crear(cfg) {
     confirmar: async (id) => (await llamar(`/importaciones/${id}/confirmar`, { method: 'POST' })).json(),
     descartar: async (id) => (await llamar(`/importaciones/${id}/descartar`, { method: 'POST' })).json(),
     exportar: (pedido) => exportar(llamar, pedido),
+    chatIA: async (cuerpo) => (await llamar('/ia/chat', json(cuerpo))).json(),
     crearUsuario: async (u) => (await llamar('/auth/usuarios', json(u))).json(),
     async cambiarClave(uid, clave) {
       await llamar(`/auth/usuarios/${uid}/clave`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clave }) })
